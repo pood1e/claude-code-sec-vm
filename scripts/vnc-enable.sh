@@ -76,26 +76,12 @@ REMOTE
 )
 
 ssh \
-  -J "$REMOTE_HOST" \
-  -o ConnectTimeout=8 \
-  -o ServerAliveInterval=5 \
-  -o ServerAliveCountMax=2 \
-  -o ForwardAgent=no \
-  -o ClearAllForwardings=yes \
-  -o UserKnownHostsFile=/tmp/ccsvm-known-hosts \
-  -o StrictHostKeyChecking=accept-new \
+  "${SSH_VM_OPTS[@]}" \
   "dev@$DEV_IP" \
   "VNC_GEOMETRY=$(shell_quote "$VNC_GEOMETRY") bash -s" <<<"$remote_prepare"
 
 ssh \
-  -J "$REMOTE_HOST" \
-  -o ConnectTimeout=8 \
-  -o ServerAliveInterval=5 \
-  -o ServerAliveCountMax=2 \
-  -o ForwardAgent=no \
-  -o ClearAllForwardings=yes \
-  -o UserKnownHostsFile=/tmp/ccsvm-known-hosts \
-  -o StrictHostKeyChecking=accept-new \
+  "${SSH_VM_OPTS[@]}" \
   "dev@$DEV_IP" \
   'umask 077; mkdir -p ~/.vnc; vncpasswd -f >~/.vnc/passwd; chmod 600 ~/.vnc/passwd' <"$VNC_PASSWORD_FILE"
 
@@ -121,13 +107,6 @@ REMOTE
 )
 
 ssh \
-  -J "$REMOTE_HOST" \
-  -o ConnectTimeout=8 \
-  -o ServerAliveInterval=5 \
-  -o ServerAliveCountMax=2 \
-  -o ForwardAgent=no \
-  -o ClearAllForwardings=yes \
-  -o UserKnownHostsFile=/tmp/ccsvm-known-hosts \
-  -o StrictHostKeyChecking=accept-new \
+  "${SSH_VM_OPTS[@]}" \
   "dev@$DEV_IP" \
   "VNC_PASSWORD_FILE=$(shell_quote "$VNC_PASSWORD_FILE") bash -s" <<<"$remote_start"

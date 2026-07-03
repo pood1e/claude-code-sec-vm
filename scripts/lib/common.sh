@@ -36,12 +36,25 @@ DEV_IMAGE_URL=${DEV_IMAGE_URL:-auto}
 SING_BOX_INSTALL_SCRIPT_URL=${SING_BOX_INSTALL_SCRIPT_URL:-https://sing-box.app/deb-install.sh}
 FOREIGN_CHECK_URL=${FOREIGN_CHECK_URL:-https://www.cloudflare.com/cdn-cgi/trace}
 
-SSH_OPTS=(
+SSH_BASE_OPTS=(
   -o ConnectTimeout=8
   -o ServerAliveInterval=5
   -o ServerAliveCountMax=2
   -o ForwardAgent=no
   -o ClearAllForwardings=yes
+  -o SendEnv=
+  -o SetEnv=
+)
+
+SSH_OPTS=(
+  "${SSH_BASE_OPTS[@]}"
+)
+
+SSH_VM_OPTS=(
+  -J "$REMOTE_HOST"
+  "${SSH_BASE_OPTS[@]}"
+  -o UserKnownHostsFile=/tmp/ccsvm-known-hosts
+  -o StrictHostKeyChecking=accept-new
 )
 
 log() {

@@ -95,14 +95,7 @@ REMOTE
 )
 
   ssh \
-    -J "$REMOTE_HOST" \
-    -o ConnectTimeout=8 \
-    -o ServerAliveInterval=5 \
-    -o ServerAliveCountMax=2 \
-    -o ForwardAgent=no \
-    -o ClearAllForwardings=yes \
-    -o UserKnownHostsFile=/tmp/ccsvm-known-hosts \
-    -o StrictHostKeyChecking=accept-new \
+    "${SSH_VM_OPTS[@]}" \
     "dev@$DEV_IP" \
     "bash -s -- $(shell_quote "$FOREIGN_TIMEZONE_URL")" <<<"$remote_command"
 }

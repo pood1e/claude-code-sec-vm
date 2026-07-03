@@ -20,7 +20,7 @@ local laptop ──ssh/vnc──> ${REMOTE_HOST}
 - VM 内不运行代理；不使用 `HTTP_PROXY/ALL_PROXY`。
 - 宿主机不启用 TUN `auto_route`，不改宿主默认路由，不拦截宿主 `OUTPUT`；只有来自 `${LAN_BRIDGE}` 且源地址为 `${DEV_IP}` 的 VM TCP/UDP 会被 TProxy。
 - 默认出口：`foreign_clean`，由 `config/secrets/sing-box-outbounds.local.json` 提供真实链式出站；DNS 由 sing-box `hijack-dns` 处理。
-- 默认隔离：阻断 RFC1918、metadata、IPv6、Docker socket、SSH agent forwarding。
+- 默认隔离：阻断 RFC1918、metadata、IPv6、Docker socket、SSH agent forwarding、SSH 本地环境变量转发。
 - 时区：默认按 `config/egress.policy.yaml` 中 `timezone.foreign_clean` 设置；也可用 `make foreign-clean-refresh` 根据当前 `foreign_clean` 出口 IP 自动刷新。
 
 ## Quickstart
@@ -133,7 +133,7 @@ make check               # 本地静态校验
 ## 安全约束
 
 - 不提交 `.env.local`、`config/secrets/*`、镜像、seed ISO、运行态。
-- 不转发本机 SSH agent：所有 SSH/VNC 入口都设置 `ForwardAgent=no`。
+- 不转发本机 SSH agent 和本地环境变量：所有 SSH/VNC 入口都设置 `ForwardAgent=no`、`SendEnv=`、`SetEnv=`。
 - 不挂载宿主目录、不暴露 Docker socket、不把宿主密钥注入 VM。
 - `make up` 会把 `ccsvm-lan` 和 `ccsvm-kali-dev` 设置为 libvirt autostart，宿主重启后 Kali 自动启动。
 - 宿主透明网关只安装 `ccsvm-sing-box.service` 和 `ccsvm-transparent-gateway.service`，不改变宿主默认出口。

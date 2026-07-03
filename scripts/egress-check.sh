@@ -88,13 +88,6 @@ REMOTE
 )
 
 exec ssh \
-  -J "$REMOTE_HOST" \
-  -o ConnectTimeout=8 \
-  -o ServerAliveInterval=5 \
-  -o ServerAliveCountMax=2 \
-  -o ForwardAgent=no \
-  -o ClearAllForwardings=yes \
-  -o UserKnownHostsFile=/tmp/ccsvm-known-hosts \
-  -o StrictHostKeyChecking=accept-new \
+  "${SSH_VM_OPTS[@]}" \
   "dev@$DEV_IP" \
   "EXPECTED_TZ=$(shell_quote "$expected_tz") LAN_HOST_IP=$(shell_quote "$LAN_HOST_IP") FOREIGN_CHECK_URL=$(shell_quote "$FOREIGN_CHECK_URL") bash -s" <<<"$remote_command"

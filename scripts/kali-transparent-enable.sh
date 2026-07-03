@@ -141,13 +141,6 @@ REMOTE
 )
 
 exec ssh \
-  -J "$REMOTE_HOST" \
-  -o ConnectTimeout=8 \
-  -o ServerAliveInterval=5 \
-  -o ServerAliveCountMax=2 \
-  -o ForwardAgent=no \
-  -o ClearAllForwardings=yes \
-  -o UserKnownHostsFile=/tmp/ccsvm-known-hosts \
-  -o StrictHostKeyChecking=accept-new \
+  "${SSH_VM_OPTS[@]}" \
   "dev@$DEV_IP" \
   "sudo -n bash -s -- $(shell_quote "$expected_tz") $(shell_quote "$LAN_HOST_IP") $(shell_quote "$DEV_IP")" <<<"$remote_command"
