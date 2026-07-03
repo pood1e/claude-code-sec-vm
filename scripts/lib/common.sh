@@ -129,6 +129,25 @@ sync_project() {
   log "syncing repository to $REMOTE_HOST:$REMOTE_WORKDIR/src"
   ssh_remote "mkdir -p $(shell_quote "$REMOTE_WORKDIR/src") $(shell_quote "$REMOTE_WORKDIR/src/runtime") $(shell_quote "$REMOTE_WORKDIR/src/config/secrets") && chmod 700 $(shell_quote "$REMOTE_WORKDIR/src/config/secrets")"
 
+  local remote_replace
+  remote_replace=$(cat <<REMOTE
+set -euo pipefail
+src=$(shell_quote "$REMOTE_WORKDIR/src")
+tmp=$(shell_quote "$REMOTE_WORKDIR/src.tmp")
+rm -rf "\$tmp"
+mkdir -p "\$tmp"
+tar -xzf - -C "\$tmp"
+mkdir -p "\$tmp/runtime" "\$tmp/config/secrets"
+chmod 700 "\$tmp/config/secrets"
+if [ -d "\$src/config/secrets" ]; then
+  cp -a "\$src/config/secrets/." "\$tmp/config/secrets/" 2>/dev/null || true
+  chmod 700 "\$tmp/config/secrets"
+fi
+rm -rf "\$src"
+mv "\$tmp" "\$src"
+REMOTE
+)
+
   COPYFILE_DISABLE=1 tar --no-xattrs -C "$ROOT_DIR" \
     --exclude '.git' \
     --exclude '.env.local' \
@@ -137,7 +156,7 @@ sync_project() {
     --exclude 'images' \
     --exclude 'volumes' \
     --exclude 'config/secrets/*' \
-    -czf - . | ssh "${SSH_OPTS[@]}" "$REMOTE_HOST" "rm -rf $(shell_quote "$REMOTE_WORKDIR/src.tmp") && mkdir -p $(shell_quote "$REMOTE_WORKDIR/src.tmp") && tar -xzf - -C $(shell_quote "$REMOTE_WORKDIR/src.tmp") && rm -rf $(shell_quote "$REMOTE_WORKDIR/src") && mv $(shell_quote "$REMOTE_WORKDIR/src.tmp") $(shell_quote "$REMOTE_WORKDIR/src") && mkdir -p $(shell_quote "$REMOTE_WORKDIR/src/runtime") $(shell_quote "$REMOTE_WORKDIR/src/config/secrets") && chmod 700 $(shell_quote "$REMOTE_WORKDIR/src/config/secrets")"
+    -czf - . | ssh "${SSH_OPTS[@]}" "$REMOTE_HOST" "$remote_replace"
 
   scp "${SSH_OPTS[@]}" "$public_key_path" "$REMOTE_HOST:$REMOTE_WORKDIR/src/runtime/authorized_keys.pub" >/dev/null
 

@@ -5,7 +5,7 @@ ANSIBLE_INVENTORY ?= ansible/inventory.ini
 SNAPSHOT ?= clean
 SSH_USER ?= dev
 
-.PHONY: help doctor host-bootstrap import-xray up transparent-enable host-transparent-enable host-transparent-status host-transparent-disable kali-transparent-enable foreign-clean-refresh ssh ssh-agent vnc-enable host-vnc-expose host-vnc-status host-vnc-unexpose egress-check snapshot restore destroy check
+.PHONY: help doctor host-bootstrap import-xray up transparent-enable host-transparent-enable host-transparent-status host-transparent-disable host-watchdog-enable host-watchdog-status host-watchdog-disable kali-transparent-enable foreign-clean-refresh ssh ssh-agent vnc-enable host-vnc-expose host-vnc-status host-vnc-unexpose egress-check snapshot restore destroy check
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"; printf "Targets:\n"} /^[a-zA-Z0-9_-]+:.*##/ {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -34,6 +34,15 @@ host-transparent-status: ## Show host-scoped transparent gateway status
 
 host-transparent-disable: ## Disable host-scoped transparent gateway without changing host default egress
 	@bash scripts/host-transparent-disable.sh
+
+host-watchdog-enable: ## Enable remote host watchdog that self-heals Kali SSH reachability
+	@bash scripts/host-watchdog-enable.sh
+
+host-watchdog-status: ## Show remote host watchdog and Kali reachability status
+	@bash scripts/host-watchdog-status.sh
+
+host-watchdog-disable: ## Disable remote host watchdog
+	@bash scripts/host-watchdog-disable.sh
 
 kali-transparent-enable: ## Configure Kali route/DNS for host transparent gateway only
 	@bash scripts/kali-transparent-enable.sh

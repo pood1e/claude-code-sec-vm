@@ -4,5 +4,4 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
 sync_project false
-run_remote_script scripts/remote/up.sh
 run_remote_script scripts/remote/host-watchdog-enable.sh

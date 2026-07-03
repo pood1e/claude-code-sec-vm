@@ -123,6 +123,7 @@ make ssh                 # 以 dev 用户进入 Kali
 make ssh-agent           # 以 agent 用户进入 Kali，无 sudo
 make transparent-enable  # 启用宿主 VM 作用域透明代理 + 配置 Kali 默认路由
 make egress-check        # 验证无显式代理、透明出站、隔离和时区
+make host-watchdog-status # 查看宿主 watchdog 和 Kali SSH/VNC 可达性
 make snapshot SNAPSHOT=clean
 make restore SNAPSHOT=clean
 make destroy             # 删除 VM、网络、运行态，保留下载镜像
@@ -136,6 +137,7 @@ make check               # 本地静态校验
 - 不转发本机 SSH agent 和本地环境变量：所有 SSH/VNC 入口都设置 `ForwardAgent=no`，并用 `-F /dev/null` 忽略本机 ssh_config 的 `SendEnv`/`SetEnv`。
 - 不挂载宿主目录、不暴露 Docker socket、不把宿主密钥注入 VM。
 - `make up` 会把 `ccsvm-lan` 和 `ccsvm-kali-dev` 设置为 libvirt autostart，宿主重启后 Kali 自动启动。
+- `make up` 会启用宿主用户 crontab watchdog；若 Kali 运行中但 SSH 连续 3 次不可达，会自动 `virsh reset` 该 VM。
 - 宿主透明网关只安装 `ccsvm-sing-box.service` 和 `ccsvm-transparent-gateway.service`，不改变宿主默认出口。
 - `make egress-check` 验证默认路由经 `${LAN_HOST_IP}`、无代理环境变量、HTTPS 透明出站、metadata/内网阻断、隔离和时区。
 
