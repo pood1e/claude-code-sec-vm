@@ -21,7 +21,7 @@ local laptop ──ssh/vnc──> ${REMOTE_HOST}
 - 宿主机不启用 TUN `auto_route`，不改宿主默认路由，不拦截宿主 `OUTPUT`；只有来自 `${LAN_BRIDGE}` 且源地址为 `${DEV_IP}` 的 VM TCP/UDP 会被 TProxy。
 - 默认出口：`foreign_clean`，由 `config/secrets/sing-box-outbounds.local.json` 提供真实链式出站；DNS 由 sing-box `hijack-dns` 处理。
 - 默认隔离：阻断 RFC1918、metadata、IPv6、Docker socket、SSH agent forwarding。
-- 时区：不调用 IP 定位 API，只按 `config/egress.policy.yaml` 中 `timezone.foreign_clean` 设置 Kali 时区。
+- 时区：默认按 `config/egress.policy.yaml` 中 `timezone.foreign_clean` 设置；也可用 `make foreign-clean-refresh` 根据当前 `foreign_clean` 出口 IP 自动刷新。
 
 ## Quickstart
 
@@ -35,7 +35,7 @@ mkdir -p config/secrets
 
 - `.env.local`：填写 `REMOTE_HOST`、`SSH_PUBLIC_KEY_PATH`、VM 资源；不要提交真实用户名、宿主地址或本地网段。
 - `config/secrets/sing-box-outbounds.local.json`：真实 sing-box 出站链，ignored，禁止提交。
-- `config/egress.policy.yaml`：如需更改国外出口时区，改 `timezone.foreign_clean`。
+- `config/egress.policy.yaml`：如需手动更改国外出口时区，改 `timezone.foreign_clean`；如需跟随当前出口，运行 `make foreign-clean-refresh`。
 
 执行：
 
@@ -54,6 +54,14 @@ make host-transparent-enable
 make kali-transparent-enable
 make host-transparent-status
 ```
+
+刷新 `foreign_clean` 出口时区：
+
+```bash
+make foreign-clean-refresh
+```
+
+该命令会在 Kali VM 内通过透明出口请求 `FOREIGN_TIMEZONE_URL`，把返回的 IANA timezone 写入 `config/egress.policy.yaml`，再应用到 Kali 并运行 `egress-check`。默认端点可在 `.env.local` 中覆盖。
 
 关闭透明网关：
 

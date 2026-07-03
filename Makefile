@@ -5,7 +5,7 @@ ANSIBLE_INVENTORY ?= ansible/inventory.ini
 SNAPSHOT ?= clean
 SSH_USER ?= dev
 
-.PHONY: help doctor host-bootstrap import-xray up transparent-enable host-transparent-enable host-transparent-status host-transparent-disable kali-transparent-enable ssh ssh-agent vnc-enable host-vnc-expose host-vnc-status host-vnc-unexpose egress-check snapshot restore destroy check
+.PHONY: help doctor host-bootstrap import-xray up transparent-enable host-transparent-enable host-transparent-status host-transparent-disable kali-transparent-enable foreign-clean-refresh ssh ssh-agent vnc-enable host-vnc-expose host-vnc-status host-vnc-unexpose egress-check snapshot restore destroy check
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"; printf "Targets:\n"} /^[a-zA-Z0-9_-]+:.*##/ {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -38,6 +38,9 @@ host-transparent-disable: ## Disable host-scoped transparent gateway without cha
 kali-transparent-enable: ## Configure Kali route/DNS for host transparent gateway only
 	@bash scripts/kali-transparent-enable.sh
 
+foreign-clean-refresh: ## Detect foreign_clean exit timezone and apply it to Kali
+	@bash scripts/foreign-clean-refresh.sh
+
 ssh: ## SSH into Kali dev VM through the remote host; override with SSH_USER=agent
 	@SSH_USER="$(SSH_USER)" bash scripts/ssh.sh
 
@@ -47,7 +50,7 @@ ssh-agent: ## SSH into the unprivileged agent user inside Kali
 vnc-enable: ## Install/start TigerVNC desktop inside Kali
 	@bash scripts/vnc-enable.sh
 
-host-vnc-expose: ## Expose Kali VNC on remote host LAN IP; defaults to CHANGE_ME_HOST:5900
+host-vnc-expose: ## Expose Kali VNC on HOST_VNC_BIND:HOST_VNC_PORT
 	@bash scripts/host-vnc-expose.sh
 
 host-vnc-status: ## Show remote host VNC proxy status
