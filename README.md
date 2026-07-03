@@ -21,7 +21,7 @@ local laptop ──ssh/vnc──> ${REMOTE_HOST}
 - 宿主机不启用 TUN `auto_route`，不改宿主默认路由，不拦截宿主 `OUTPUT`；只有来自 `${LAN_BRIDGE}` 且源地址为 `${DEV_IP}` 的 VM TCP/UDP 会被 TProxy。
 - 默认出口：`foreign_clean`，由 `config/secrets/sing-box-outbounds.local.json` 提供真实链式出站；DNS 由 sing-box `hijack-dns` 处理。
 - 默认隔离：阻断 RFC1918、metadata、IPv6、Docker socket、SSH agent forwarding、SSH 本地环境变量转发。
-- 时区：默认按 `config/egress.policy.yaml` 中 `timezone.foreign_clean` 设置；也可用 `make foreign-clean-refresh` 根据当前 `foreign_clean` 出口 IP 自动刷新。
+- 时区：默认按 `config/egress.policy.yaml` 中 `timezone.foreign_clean` 设置系统时区；不设置 `TZ` 环境变量，避免 shell/Claude 进程残留旧时区。也可用 `make foreign-clean-refresh` 根据当前 `foreign_clean` 出口 IP 自动刷新。
 
 ## Quickstart
 

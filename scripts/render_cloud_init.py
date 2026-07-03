@@ -32,7 +32,7 @@ net.ipv4.conf.all.accept_redirects=0
 net.ipv4.conf.default.accept_redirects=0
 SYSCTL
 
-rm -f /etc/profile.d/ccsvm-proxy.sh /etc/apt/apt.conf.d/90ccsvm-proxy
+rm -f /etc/profile.d/ccsvm-proxy.sh /etc/profile.d/ccsvm-timezone.sh /etc/apt/apt.conf.d/90ccsvm-proxy
 rm -f /etc/resolv.conf
 systemctl disable --now ccsvm-no-direct-route.service 2>/dev/null || true
 rm -f /etc/systemd/system/ccsvm-no-direct-route.service
@@ -163,7 +163,6 @@ def write_b64_file(path: str, mode: str, content: bytes) -> str:
 
 def render_kali(args: argparse.Namespace, authorized_key: str) -> tuple[str, str]:
     hardening = kali_hardening_script(args.timezone, args.lan_host_ip, args.dev_ip)
-    env_file = f"TZ={args.timezone}\nexport TZ\n"
     user_data = f"""#cloud-config
 hostname: kali-dev
 manage_etc_hosts: true
@@ -202,7 +201,6 @@ packages:
   - rustc
   - cargo
 write_files:
-{write_b64_file('/etc/profile.d/ccsvm-timezone.sh', '0644', env_file.encode())}
 {write_b64_file('/usr/local/sbin/ccsvm-kali-hardening.sh', '0755', hardening.encode())}
 runcmd:
   - [ bash, /usr/local/sbin/ccsvm-kali-hardening.sh ]

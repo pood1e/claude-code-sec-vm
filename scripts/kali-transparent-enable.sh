@@ -21,7 +21,7 @@ net.ipv4.conf.all.accept_redirects=0
 net.ipv4.conf.default.accept_redirects=0
 SYSCTL
 
-rm -f /etc/profile.d/ccsvm-proxy.sh /etc/apt/apt.conf.d/90ccsvm-proxy
+rm -f /etc/profile.d/ccsvm-proxy.sh /etc/profile.d/ccsvm-timezone.sh /etc/apt/apt.conf.d/90ccsvm-proxy
 systemctl disable --now ccsvm-no-direct-route.service 2>/dev/null || true
 rm -f /etc/systemd/system/ccsvm-no-direct-route.service
 rm -f /etc/resolv.conf

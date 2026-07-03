@@ -13,6 +13,14 @@ actual_tz=$(timedatectl show -p Timezone --value 2>/dev/null || true)
 [ "$actual_tz" = "$EXPECTED_TZ" ] || fail "timezone=$actual_tz expected=$EXPECTED_TZ"
 ok "timezone $actual_tz"
 
+[ ! -e /etc/profile.d/ccsvm-timezone.sh ] || fail "stale timezone profile override exists"
+for shell_path in /usr/bin/bash /usr/bin/zsh; do
+  [ -x "$shell_path" ] || continue
+  login_tz=$("$shell_path" -lc 'printf "%s" "${TZ-}"' 2>/dev/null || true)
+  [ -z "$login_tz" ] || fail "timezone environment override present in ${shell_path##*/}"
+done
+ok "timezone environment override absent"
+
 ip route | grep -Eq "^default via ${LAN_HOST_IP//./\\.} dev lan0" || fail "default route is not via transparent host gateway $LAN_HOST_IP"
 ok "default route via transparent host gateway"
 
