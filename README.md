@@ -133,7 +133,7 @@ make check               # 本地静态校验
 ## 安全约束
 
 - 不提交 `.env.local`、`config/secrets/*`、镜像、seed ISO、运行态。
-- 不转发本机 SSH agent 和本地环境变量：所有 SSH/VNC 入口都设置 `ForwardAgent=no`、`SendEnv=`、`SetEnv=`。
+- 不转发本机 SSH agent 和本地环境变量：所有 SSH/VNC 入口都设置 `ForwardAgent=no`，并用 `-F /dev/null` 忽略本机 ssh_config 的 `SendEnv`/`SetEnv`。
 - 不挂载宿主目录、不暴露 Docker socket、不把宿主密钥注入 VM。
 - `make up` 会把 `ccsvm-lan` 和 `ccsvm-kali-dev` 设置为 libvirt autostart，宿主重启后 Kali 自动启动。
 - 宿主透明网关只安装 `ccsvm-sing-box.service` 和 `ccsvm-transparent-gateway.service`，不改变宿主默认出口。

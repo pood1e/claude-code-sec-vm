@@ -37,13 +37,12 @@ SING_BOX_INSTALL_SCRIPT_URL=${SING_BOX_INSTALL_SCRIPT_URL:-https://sing-box.app/
 FOREIGN_CHECK_URL=${FOREIGN_CHECK_URL:-https://www.cloudflare.com/cdn-cgi/trace}
 
 SSH_BASE_OPTS=(
+  -F /dev/null
   -o ConnectTimeout=8
   -o ServerAliveInterval=5
   -o ServerAliveCountMax=2
   -o ForwardAgent=no
   -o ClearAllForwardings=yes
-  -o SendEnv=
-  -o SetEnv=
 )
 
 SSH_OPTS=(
