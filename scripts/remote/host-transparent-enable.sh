@@ -68,7 +68,6 @@ install_sing_box() {
 
 require_cmd python3 ip nft awk curl systemctl
 require_sudo
-[[ -f "$OUTBOUNDS_FILE" ]] || fail "missing $OUTBOUNDS_FILE; run make import-xray or create sing-box outbounds first"
 
 host_if=$(ip route show default 0.0.0.0/0 | awk 'NR==1 {for (i=1; i<=NF; i++) if ($i=="dev") {print $(i+1); exit}}')
 [[ -n "$host_if" ]] || fail "cannot determine host default interface"
@@ -79,21 +78,30 @@ if flag_enabled "$ALLOW_KALI_192_168_0_24"; then
   lan_access=192.168.0.0/24
 fi
 
-install_sing_box
-sing_box_bin=$(command -v sing-box)
-[[ -n "$sing_box_bin" ]] || fail "sing-box binary is missing after install"
-
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 mkdir -p "$RUNTIME_DIR/transparent"
 
-python3 "$SRC_DIR/scripts/render_sing_box_config.py" \
-  --policy "$POLICY_FILE" \
-  --outbounds "$OUTBOUNDS_FILE" \
-  --output "$tmpdir/sing-box.json"
+configure_sing_box=0
+if [[ -f "$OUTBOUNDS_FILE" ]]; then
+  configure_sing_box=1
+  install_sing_box
+else
+  sudo_run test -f "$SING_BOX_CONFIG" || fail "missing $OUTBOUNDS_FILE and no installed $SING_BOX_CONFIG; create sing-box outbounds first or run transparent-enable from a checkout that has it"
+fi
 
-if ! "$sing_box_bin" check -c "$tmpdir/sing-box.json" >"$RUNTIME_DIR/transparent/sing-box-check.log" 2>&1; then
-  fail "sing-box config validation failed; inspect remote $RUNTIME_DIR/transparent/sing-box-check.log"
+sing_box_bin=$(command -v sing-box || true)
+[[ -n "$sing_box_bin" ]] || fail "sing-box binary is missing"
+
+if [[ $configure_sing_box == 1 ]]; then
+  python3 "$SRC_DIR/scripts/render_sing_box_config.py" \
+    --policy "$POLICY_FILE" \
+    --outbounds "$OUTBOUNDS_FILE" \
+    --output "$tmpdir/sing-box.json"
+
+  if ! "$sing_box_bin" check -c "$tmpdir/sing-box.json" >"$RUNTIME_DIR/transparent/sing-box-check.log" 2>&1; then
+    fail "sing-box config validation failed; inspect remote $RUNTIME_DIR/transparent/sing-box-check.log"
+  fi
 fi
 
 lan_access_set=
@@ -219,7 +227,9 @@ WantedBy=multi-user.target
 UNIT
 
 sudo_run install -d -m 0755 "$INSTALL_DIR" /etc/claude-code-sec-vm /var/lib/sing-box
-sudo_run install -m 0600 "$tmpdir/sing-box.json" "$SING_BOX_CONFIG"
+if [[ $configure_sing_box == 1 ]]; then
+  sudo_run install -m 0600 "$tmpdir/sing-box.json" "$SING_BOX_CONFIG"
+fi
 sudo_run install -m 0644 "$tmpdir/transparent-gateway.nft" "$INSTALL_DIR/transparent-gateway.nft"
 sudo_run install -m 0755 "$tmpdir/transparent-gateway-apply.sh" "$INSTALL_DIR/transparent-gateway-apply.sh"
 sudo_run install -m 0755 "$tmpdir/transparent-gateway-stop.sh" "$INSTALL_DIR/transparent-gateway-stop.sh"
