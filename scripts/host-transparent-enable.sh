@@ -3,7 +3,11 @@ set -euo pipefail
 # shellcheck source=scripts/lib/common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
-sync_project true
+upload_outbounds=false
+if [[ -f "$SING_BOX_OUTBOUNDS_FILE" ]]; then
+  upload_outbounds=true
+fi
+sync_project "$upload_outbounds"
 
 interactive_sudo=0
 if [[ ${HOST_TRANSPARENT_INTERACTIVE_SUDO:-auto} == 1 || ( ${HOST_TRANSPARENT_INTERACTIVE_SUDO:-auto} == auto && -t 0 && -t 1 ) ]]; then

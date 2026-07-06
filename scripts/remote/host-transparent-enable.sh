@@ -38,6 +38,27 @@ print(", ".join(items))
 PY
 }
 
+normalize_ipv4_cidrs() {
+  local raw=${1:-}
+  python3 - "$raw" <<'PY'
+import ipaddress
+import sys
+
+raw = sys.argv[1].replace(",", " ")
+cidrs = []
+seen = set()
+for item in raw.split():
+    network = ipaddress.ip_network(item, strict=False)
+    if network.version != 4:
+        raise SystemExit(f"IPv6 CIDR is not supported here: {item}")
+    normalized = str(network)
+    if normalized not in seen:
+        cidrs.append(normalized)
+        seen.add(normalized)
+print(", ".join(cidrs))
+PY
+}
+
 install_sing_box() {
   if command -v sing-box >/dev/null 2>&1; then
     return
@@ -66,6 +87,7 @@ host_if=$(ip route show default 0.0.0.0/0 | awk 'NR==1 {for (i=1; i<=NF; i++) if
 [[ -n "$host_if" ]] || fail "cannot determine host default interface"
 tproxy_port=$(policy_value tproxy_port)
 blocked=$(blocked_cidrs)
+lan_access=$(normalize_ipv4_cidrs "$LAN_ACCESS_CIDRS")
 
 install_sing_box
 sing_box_bin=$(command -v sing-box)
@@ -84,17 +106,44 @@ if ! "$sing_box_bin" check -c "$tmpdir/sing-box.json" >"$RUNTIME_DIR/transparent
   fail "sing-box config validation failed; inspect remote $RUNTIME_DIR/transparent/sing-box-check.log"
 fi
 
+lan_access_set=
+lan_access_prerouting_rule=
+lan_access_forward_rule=
+lan_access_postrouting_chain=
+if [[ -n "$lan_access" ]]; then
+  lan_access_set=$(cat <<NFT
+
+  set lan_access_v4 {
+    type ipv4_addr
+    flags interval
+    elements = { ${lan_access} }
+  }
+NFT
+)
+  lan_access_prerouting_rule="    iifname \"${LAN_BRIDGE}\" ip saddr ${DEV_IP} ip daddr @lan_access_v4 counter accept"
+  lan_access_forward_rule="    iifname \"${LAN_BRIDGE}\" ip saddr ${DEV_IP} ip daddr @lan_access_v4 counter accept"
+  lan_access_postrouting_chain=$(cat <<NFT
+
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+    ip saddr ${DEV_IP} ip daddr @lan_access_v4 counter masquerade
+  }
+NFT
+)
+fi
+
 cat >"$tmpdir/transparent-gateway.nft" <<NFT
 table inet ${NFT_TABLE} {
   set blocked_v4 {
     type ipv4_addr
     flags interval
     elements = { ${blocked} }
-  }
+  }${lan_access_set}
 
   chain prerouting {
     type filter hook prerouting priority mangle; policy accept;
     iifname "${LAN_BRIDGE}" ip saddr ${DEV_IP} ip daddr ${LAN_HOST_IP} ct state established,related counter accept
+${lan_access_prerouting_rule}
     iifname "${LAN_BRIDGE}" ip saddr ${DEV_IP} ip daddr @blocked_v4 counter drop
     iifname "${LAN_BRIDGE}" ip saddr ${DEV_IP} meta l4proto { tcp, udp } counter meta mark set ${TPROXY_MARK} tproxy ip to :${tproxy_port} accept
     iifname "${LAN_BRIDGE}" ip saddr ${DEV_IP} counter drop
@@ -103,8 +152,9 @@ table inet ${NFT_TABLE} {
   chain forward {
     type filter hook forward priority filter; policy accept;
     ct state established,related counter accept
+${lan_access_forward_rule}
     iifname "${LAN_BRIDGE}" ip saddr ${DEV_IP} counter drop
-  }
+  }${lan_access_postrouting_chain}
 }
 NFT
 
@@ -192,5 +242,5 @@ sudo_run systemctl enable ccsvm-sing-box.service ccsvm-transparent-gateway.servi
 sudo_run systemctl restart ccsvm-sing-box.service
 sudo_run systemctl restart ccsvm-transparent-gateway.service
 
-printf 'transparent_gateway=enabled scope_iif=%s scope_src=%s tproxy_port=%s host_default_if=%s host_output=untouched\n' \
-  "$LAN_BRIDGE" "$DEV_IP" "$tproxy_port" "$host_if"
+printf 'transparent_gateway=enabled scope_iif=%s scope_src=%s tproxy_port=%s host_default_if=%s lan_access_cidrs=%s host_output=untouched\n' \
+  "$LAN_BRIDGE" "$DEV_IP" "$tproxy_port" "$host_if" "${lan_access:-none}"

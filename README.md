@@ -37,6 +37,15 @@ mkdir -p config/secrets
 - `config/secrets/sing-box-outbounds.local.json`：真实 sing-box 出站链，ignored，禁止提交。
 - `config/egress.policy.yaml`：如需手动更改国外出口时区，改 `timezone.foreign_clean`；如需跟随当前出口，运行 `make foreign-clean-refresh`。
 
+如需让 Kali 直接访问宿主侧局域网中的特定网段，把真实网段只写在 `.env.local`：
+
+```bash
+LAN_ACCESS_CIDRS=192.168.0.0/24
+make host-transparent-enable
+```
+
+该规则只对 `${DEV_IP}` 放行并在宿主上做 masquerade；未列入的 RFC1918/metadata 网段仍按隔离策略阻断。
+
 执行：
 
 ```bash
