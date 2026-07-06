@@ -38,25 +38,12 @@ print(", ".join(items))
 PY
 }
 
-normalize_ipv4_cidrs() {
-  local raw=${1:-}
-  python3 - "$raw" <<'PY'
-import ipaddress
-import sys
-
-raw = sys.argv[1].replace(",", " ")
-cidrs = []
-seen = set()
-for item in raw.split():
-    network = ipaddress.ip_network(item, strict=False)
-    if network.version != 4:
-        raise SystemExit(f"IPv6 CIDR is not supported here: {item}")
-    normalized = str(network)
-    if normalized not in seen:
-        cidrs.append(normalized)
-        seen.add(normalized)
-print(", ".join(cidrs))
-PY
+flag_enabled() {
+  case "${1:-0}" in
+    1 | true | TRUE | yes | YES) return 0 ;;
+    0 | false | FALSE | no | NO | "") return 1 ;;
+    *) fail "invalid boolean value: $1" ;;
+  esac
 }
 
 install_sing_box() {
@@ -87,7 +74,10 @@ host_if=$(ip route show default 0.0.0.0/0 | awk 'NR==1 {for (i=1; i<=NF; i++) if
 [[ -n "$host_if" ]] || fail "cannot determine host default interface"
 tproxy_port=$(policy_value tproxy_port)
 blocked=$(blocked_cidrs)
-lan_access=$(normalize_ipv4_cidrs "$LAN_ACCESS_CIDRS")
+lan_access=
+if flag_enabled "$ALLOW_KALI_192_168_0_24"; then
+  lan_access=192.168.0.0/24
+fi
 
 install_sing_box
 sing_box_bin=$(command -v sing-box)
@@ -242,5 +232,10 @@ sudo_run systemctl enable ccsvm-sing-box.service ccsvm-transparent-gateway.servi
 sudo_run systemctl restart ccsvm-sing-box.service
 sudo_run systemctl restart ccsvm-transparent-gateway.service
 
-printf 'transparent_gateway=enabled scope_iif=%s scope_src=%s tproxy_port=%s host_default_if=%s lan_access_cidrs=%s host_output=untouched\n' \
-  "$LAN_BRIDGE" "$DEV_IP" "$tproxy_port" "$host_if" "${lan_access:-none}"
+if [[ -n "$lan_access" ]]; then
+  lan_access_status=enabled
+else
+  lan_access_status=disabled
+fi
+printf 'transparent_gateway=enabled scope_iif=%s scope_src=%s tproxy_port=%s host_default_if=%s kali_192_168_0_24_access=%s host_output=untouched\n' \
+  "$LAN_BRIDGE" "$DEV_IP" "$tproxy_port" "$host_if" "$lan_access_status"
