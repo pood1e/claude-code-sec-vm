@@ -66,7 +66,7 @@ install_sing_box() {
   sudo_run apt-get install -y sing-box
 }
 
-require_cmd python3 ip nft awk curl systemctl
+require_cmd python3 ip nft awk curl systemctl iptables
 require_sudo
 
 host_if=$(ip route show default 0.0.0.0/0 | awk 'NR==1 {for (i=1; i<=NF; i++) if ($i=="dev") {print $(i+1); exit}}')
@@ -119,12 +119,12 @@ if [[ -n "$lan_access" ]]; then
 NFT
 )
   lan_access_prerouting_rule="    iifname \"${LAN_BRIDGE}\" ip saddr ${DEV_IP} ip daddr @lan_access_v4 counter accept"
-  lan_access_forward_rule="    iifname \"${LAN_BRIDGE}\" ip saddr ${DEV_IP} ip daddr @lan_access_v4 counter accept"
+  lan_access_forward_rule="    iifname \"${LAN_BRIDGE}\" oifname \"${host_if}\" ip saddr ${DEV_IP} ip daddr @lan_access_v4 counter accept"
   lan_access_postrouting_chain=$(cat <<NFT
 
   chain postrouting {
     type nat hook postrouting priority srcnat; policy accept;
-    ip saddr ${DEV_IP} ip daddr @lan_access_v4 counter masquerade
+    oifname "${host_if}" ip saddr ${DEV_IP} ip daddr @lan_access_v4 counter masquerade
   }
 NFT
 )
@@ -174,11 +174,22 @@ nft delete table inet ccsvm_transparent >/dev/null 2>&1 || true
 nft -f /usr/local/lib/claude-code-sec-vm/transparent-gateway.nft
 nft delete table inet ccsvm_host_guard >/dev/null 2>&1 || true
 rm -f /etc/nftables.d/ccsvm-host-guard.nft
+insert_iptables_rule() {
+  iptables -w -C FORWARD "\$@" >/dev/null 2>&1 || iptables -w -I FORWARD 1 "\$@"
+}
+if [[ -n "${lan_access}" ]]; then
+  insert_iptables_rule -i "${LAN_BRIDGE}" -o "${host_if}" -s "${DEV_IP}" -d "${lan_access}" -j ACCEPT
+  insert_iptables_rule -i "${host_if}" -o "${LAN_BRIDGE}" -s "${lan_access}" -d "${DEV_IP}" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+fi
 APPLY
 
 cat >"$tmpdir/transparent-gateway-stop.sh" <<STOP
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ -n "${lan_access}" ]]; then
+  while iptables -w -D FORWARD -i "${LAN_BRIDGE}" -o "${host_if}" -s "${DEV_IP}" -d "${lan_access}" -j ACCEPT >/dev/null 2>&1; do :; done
+  while iptables -w -D FORWARD -i "${host_if}" -o "${LAN_BRIDGE}" -s "${lan_access}" -d "${DEV_IP}" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT >/dev/null 2>&1; do :; done
+fi
 nft delete table inet ${NFT_TABLE} >/dev/null 2>&1 || true
 ip rule del priority ${TPROXY_TABLE} fwmark ${TPROXY_MARK} table ${TPROXY_TABLE} >/dev/null 2>&1 || true
 ip route flush table ${TPROXY_TABLE} >/dev/null 2>&1 || true
