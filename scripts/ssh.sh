@@ -4,6 +4,9 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
 SSH_USER=${SSH_USER:-dev}
-exec ssh \
+reset_terminal_input_modes
+trap reset_terminal_input_modes EXIT
+
+ssh \
   "${SSH_VM_OPTS[@]}" \
   "$SSH_USER@$DEV_IP" "$@"

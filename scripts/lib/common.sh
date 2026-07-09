@@ -66,6 +66,16 @@ fail() {
   exit 1
 }
 
+reset_terminal_input_modes() {
+  [[ -t 1 ]] || return 0
+  local mode
+  {
+    for mode in 9 1000 1001 1002 1003 1004 1005 1006 1015 2004; do
+      printf '\033[?%sl' "$mode"
+    done
+  } >/dev/tty 2>/dev/null || true
+}
+
 shell_quote() {
   local value=${1-}
   printf "'%s'" "${value//\'/\'\\\'\'}"
