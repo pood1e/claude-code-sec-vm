@@ -7,7 +7,7 @@
 ```text
 VM agent / Claude Code → sing-box TUN → 隔离网络 → 宿主 sing-box 守卫
                                          ├─ RFC1918 私网 → 宿主直连
-                                         └─ 公网 → 宿主 SOCKS5 127.0.0.1:10812
+                                         └─ 公网 → 宿主 SOCKS5 127.0.0.1:10813
 ```
 
 Linux 使用 libvirt/KVM 独立网络和 nwfilter，只允许 VM 连接宿主守卫端口。macOS 使用 QEMU/HVF 的受限用户网络，仅向 VM 开放代理转发和宿主本地 SSH 入口。VM 内的 `agent` 用户没有 sudo 权限；没有宿主目录或密钥挂载，也不设置显式代理环境变量。
@@ -22,7 +22,7 @@ Linux 需要 KVM、libvirt、virt-install、xorriso、Python 3、curl、jq 和 S
 brew install python qemu sing-box xorriso
 ```
 
-两种宿主都需要可用的 SOCKS5 `127.0.0.1:10812`。`config.local.json` 可设置实际端口、出口时区和 VM 资源。
+两种宿主都需要可用的 SOCKS5 `127.0.0.1:10813`。`config.local.json` 可设置实际端口、出口时区和 VM 资源。
 
 ```bash
 git clone https://github.com/pood1e/claude-code-sec-vm.git

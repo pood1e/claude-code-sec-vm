@@ -1,6 +1,6 @@
 {
-  "upstream_socks_port": 10812,
-  "timezone": "America/New_York",
+  "upstream_socks_port": 10813,
+  "timezone": "Europe/Berlin",
   "memory_mib": 6144,
   "vcpus": 4,
   "disk_gib": 40
