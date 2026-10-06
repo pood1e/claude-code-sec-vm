@@ -1,0 +1,7 @@
+{
+  "upstream_socks_port": 10812,
+  "timezone": "America/New_York",
+  "memory_mib": 6144,
+  "vcpus": 4,
+  "disk_gib": 40
+}

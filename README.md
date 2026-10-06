@@ -1,169 +1,43 @@
-# claude-code-sec-vm
+# Claude KVM 隔离环境
 
-隔离运行不可信 AI 编程客户端的远端 Kali 开发 VM。目标宿主由 `.env.local` 的 `REMOTE_HOST` 指定，使用 KVM/libvirt；Kali VM 通过宿主机**按 VM 作用域**的 sing-box TProxy 透明出站，VM 内不跑代理、不设置代理环境变量。
+本项目在本机 libvirt 上创建一台专用于 Claude Code 的 Ubuntu 26.04 VM。宿主现有 Claude 安装与配置不参与运行。
 
 ## 架构
 
 ```text
-local laptop ──ssh/vnc──> ${REMOTE_HOST}
-                              │
-                              ├─ host normal egress：不改、不走 ldp
-                              ├─ host sing-box TProxy：只匹配 ${LAN_BRIDGE} + ${DEV_IP}
-                              │
-                              └─ ccsvm-lan bridge ${LAN_HOST_IP} on ${LAN_CIDR}
-                                           │
-                                      kali-dev ${DEV_IP}
-                                      default via ${LAN_HOST_IP}
+agent 用户 / Claude Code
+        │
+        ▼
+VM sing-box TUN ── libvirt 隔离网 ── 宿主 sing-box 守卫 ── 127.0.0.1:10812 ── 外网
+        │                  │
+        │                  └─ nwfilter 仅允许 DHCP、宿主代理端口；宿主可 SSH 进入 VM
+        └─ 无 sudo、无宿主目录/密钥挂载、无显式代理环境变量
 ```
 
-- `kali-dev`：唯一 VM，Kali 开发环境；可选启用 XFCE + VNC；`dev` 用户可 sudo，`agent` 用户无 sudo。用户名称是 VM 内固定角色名，不是宿主机用户名。
-- VM 内不运行代理；不使用 `HTTP_PROXY/ALL_PROXY`。
-- 宿主机不启用 TUN `auto_route`，不改宿主默认路由，不拦截宿主 `OUTPUT`；只有来自 `${LAN_BRIDGE}` 且源地址为 `${DEV_IP}` 的 VM TCP/UDP 会被 TProxy。
-- 默认出口：`foreign_clean`，由 `config/secrets/sing-box-outbounds.local.json` 提供真实链式出站；DNS 由 sing-box `hijack-dns` 处理。
-- 默认隔离：阻断 RFC1918、metadata、IPv6、Docker socket、SSH agent forwarding、SSH 本地环境变量转发。
-- 时区：默认按 `config/egress.policy.yaml` 中 `timezone.foreign_clean` 设置系统时区；不设置 `TZ` 环境变量，避免 shell/Claude 进程残留旧时区。也可用 `make foreign-clean-refresh` 根据当前 `foreign_clean` 出口 IP 自动刷新。
+宿主代理守卫拒绝内网、环回、链路本地、metadata 和 IPv6 目标。VM 只有一张固定 MAC 的虚拟网卡，使用固定的 `EPYC-v4` CPU 模型；系统时区与 `10812` 当前出口的 `America/New_York` 一致。DNS 经 VM 的 TUN 发送 DoH，再通过宿主代理。VM 网络断开或代理服务失败时，libvirt 隔离网不会提供直连出口。
 
-## Quickstart
+## 使用
+
+需要 Linux x86_64、KVM、libvirt、virt-install、xorriso、Python 3、curl、jq、SSH，以及可用的宿主 SOCKS5 `127.0.0.1:10812`。
 
 ```bash
-cp .env.example .env.local
-cp ansible/inventory.example.ini ansible/inventory.ini
-mkdir -p config/secrets
+git clone https://github.com/pood1e/claude-code-sec-vm.git
+cd claude-code-sec-vm
+./claude-vm doctor
+./claude-vm up
+./claude-vm status
+./claude-vm check
+./claude-vm ssh
 ```
 
-编辑：
+首次启动会下载并校验 Ubuntu Cloud Image 与 sing-box，然后在 VM 中安装 Claude Code；在 `status` 显示 `ready` 后执行 `check`。进入 VM 后在项目目录运行 `claude` 并按官方流程完成登录。项目代码应在 VM 内通过 Git 获取；SSH 不转发宿主 SSH agent。
 
-- `.env.local`：填写 `REMOTE_HOST`、`SSH_PUBLIC_KEY_PATH`、VM 资源；不要提交真实用户名、宿主地址或本地网段。
-- `config/secrets/sing-box-outbounds.local.json`：真实 sing-box 出站链，ignored，禁止提交。
-- `config/egress.policy.yaml`：如需手动更改国外出口时区，改 `timezone.foreign_clean`；如需跟随当前出口，运行 `make foreign-clean-refresh`。
+`config.local.json` 可调整 VM 资源、上游端口与时区。VM 创建后改动配置，运行 `./claude-vm rebuild --yes` 重建；此操作会删除 VM 系统盘及其中的工作数据。`runtime/` 含 SSH 私钥、镜像缓存与生成配置，已被 Git 忽略。运行中的 VM 可用 `./claude-vm stop` 关闭，再用 `./claude-vm start` 启动。
 
-如需让 Kali 直接访问宿主侧 `192.168.0.0/24`，在 `.env.local` 开启唯一允许的内网直连例外：
+## 遥测与隔离边界
 
-```bash
-ALLOW_KALI_192_168_0_24=1
-make host-transparent-enable
-```
+VM 的 Claude Code 设置启用官方的 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`，并关闭主动反馈、官方插件市场自动安装和 WebFetch 预检。该开关会影响部分功能，例如 Remote Control。必要的登录与模型 API 请求仍需联网，不能保证这些请求完全不携带 VM 环境信息；固定虚拟硬件也不能让软件无法识别虚拟机。若在宿主浏览器完成登录，浏览器本身不在此隔离边界内。
 
-该规则只对 `${DEV_IP}` 到 `192.168.0.0/24` 放行并在宿主上做 masquerade；其它 RFC1918/metadata 网段和原有透明出站能力保持不变。
+本项目只改动自己的 libvirt 网络、过滤器、VM、镜像卷和宿主用户级 `claude-sandbox-proxy.service`；宿主默认路由与现有 Claude 不变。
 
-执行：
-
-```bash
-make doctor
-# 如远端缺依赖：make host-bootstrap
-make up
-make transparent-enable   # 需要远程宿主 sudo；只影响 Kali VM 作用域
-make egress-check
-```
-
-如果只想分步：
-
-```bash
-make host-transparent-enable
-make kali-transparent-enable
-make host-transparent-status
-```
-
-刷新 `foreign_clean` 出口时区：
-
-```bash
-make foreign-clean-refresh
-```
-
-该命令会在 Kali VM 内通过透明出口请求 `FOREIGN_TIMEZONE_URL`，把返回的 IANA timezone 写入 `config/egress.policy.yaml`，再应用到 Kali 并运行 `egress-check`。默认端点可在 `.env.local` 中覆盖。
-
-关闭透明网关：
-
-```bash
-make host-transparent-disable
-```
-
-## VNC 远程桌面
-
-推荐使用 VNC：
-
-```bash
-make vnc-enable          # 在 Kali 内安装/启动 TigerVNC
-make host-vnc-expose     # nftables 直转发 ${HOST_VNC_BIND}:${HOST_VNC_PORT} -> Kali:${GUEST_VNC_PORT}
-make host-vnc-status
-```
-
-`host-vnc-expose` 在远程宿主机上安装持久化 `DNAT + SNAT` 规则；回包作为已建立连接放行，不改变 VM 的透明出站策略。在本机终端运行时会触发远程 sudo 交互；在非交互自动化中需要远程 sudo 已免密。
-
-VNC 密码保存在本机 ignored 文件：
-
-```text
-runtime/vnc-password.txt
-```
-
-macOS Retina 下不要使用 Homebrew 的 `/opt/homebrew/bin/vncviewer`，它会触发 TigerVNC/FLTK 的 HiDPI 1/4 屏问题。使用上游官方 `.dmg` 安装的 App：
-
-```bash
-open -a "$HOME/Applications/TigerVNC.app" --args -RemoteResize=0 -PreferredEncoding=ZRLE -CompressLevel=6 -QualityLevel=6 "${HOST_VNC_BIND:-<remote-host-or-lan-ip>}"
-```
-
-密码读取 `runtime/vnc-password.txt`。默认 VNC 桌面固定为 `1440x900`，拒绝客户端自动改尺寸。
-
-## sing-box 出站配置
-
-当前默认使用宿主 sing-box 做透明网关；`make import-xray` 只用于把已有 Xray 出站链转换为 sing-box outbounds 文件，不作为运行时 bridge。
-
-```bash
-make import-xray
-```
-
-生成/维护：
-
-```text
-config/secrets/sing-box-outbounds.local.json
-```
-
-典型链路：
-
-```text
-foreign_clean: shadowsocks -> detour -> LOS: vless/reality
-domestic:      shadowsocks -> detour -> LOS: vless/reality
-```
-
-## 常用命令
-
-```bash
-make ssh                 # 以 dev 用户进入 Kali
-make ssh-agent           # 以 agent 用户进入 Kali，无 sudo
-make transparent-enable  # 启用宿主 VM 作用域透明代理 + 配置 Kali 默认路由
-make egress-check        # 验证无显式代理、透明出站、隔离和时区
-make host-watchdog-status # 查看宿主 watchdog 和 Kali SSH/VNC 可达性
-make snapshot SNAPSHOT=clean
-make restore SNAPSHOT=clean
-make destroy             # 删除 VM、网络、运行态，保留下载镜像
-PURGE=1 make destroy     # 同时删除镜像缓存
-make check               # 本地静态校验
-```
-
-## 安全约束
-
-- 不提交 `.env.local`、`config/secrets/*`、镜像、seed ISO、运行态。
-- 不转发本机 SSH agent 和本地环境变量：所有 SSH/VNC 入口都设置 `ForwardAgent=no`，并用 `-F /dev/null` 忽略本机 ssh_config 的 `SendEnv`/`SetEnv`。
-- 不挂载宿主目录、不暴露 Docker socket、不把宿主密钥注入 VM。
-- `make up` 会把 `ccsvm-lan` 和 `ccsvm-kali-dev` 设置为 libvirt autostart，宿主重启后 Kali 自动启动。
-- `make up` 会启用宿主用户 crontab watchdog；若 Kali 运行中但 SSH 连续 3 次不可达，会自动 `virsh reset` 该 VM。
-- 宿主透明网关只安装 `ccsvm-sing-box.service` 和 `ccsvm-transparent-gateway.service`，不改变宿主默认出口。
-- `make egress-check` 验证默认路由经 `${LAN_HOST_IP}`、无代理环境变量、HTTPS 透明出站、metadata/内网阻断、隔离和时区。
-
-## 文件说明
-
-- `Makefile`：统一入口。
-- `scripts/`：本地编排、远端 libvirt 操作、透明网关、配置渲染和验收检查。
-- `config/egress.policy.yaml`：可提交的出口策略与时区策略。
-- `config/secrets/sing-box-outbounds.local.json`：ignored 的真实代理出站配置。
-- `ansible/host-bootstrap.yml`：远端宿主依赖安装。
-
-## 运行 Claude Code 的建议
-
-进入 VM 后使用低权限用户：
-
-```bash
-make ssh-agent
-```
-
-在 `agent` 用户内安装/运行客户端。不要把宿主 SSH 私钥、长期 token 或项目密钥复制进去；需要访问代码时优先使用临时 Git 凭据或只读 deploy key。
+实现依据：[Claude Code 安装](https://code.claude.com/docs/en/setup)、[Claude Code 数据使用与遥测开关](https://code.claude.com/docs/en/data-usage)、[libvirt 网络过滤器](https://libvirt.org/formatnwfilter.html)、[sing-box TUN](https://sing-box.sagernet.org/configuration/inbound/tun/)。

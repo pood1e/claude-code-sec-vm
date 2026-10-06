@@ -1,0 +1,271 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+RUN="$ROOT/runtime"
+CACHE="$RUN/cache"
+URI=qemu:///system
+POOL=images
+NAME=claude-sandbox
+NET=claude-sandbox-net
+FILTER=claude-sandbox-egress
+BASE=claude-sandbox-base.qcow2
+DISK=claude-sandbox.qcow2
+TOOLS=claude-sandbox-tools.iso
+SEED=claude-sandbox-seed.iso
+UBUNTU_IMAGE=resolute-server-cloudimg-amd64.img
+UBUNTU_URL="https://cloud-images.ubuntu.com/resolute/current/$UBUNTU_IMAGE"
+UBUNTU_SHA256=8800651811af9a85465ad1d552add729947bb16488dddb4a9b5305a3d97332b2
+SING_VERSION=1.14.2
+SING_SHA256=a684484d7477d1437282ee411f4d131d0340aaad60a7868841ebd5d87dd8a0c6
+SING_ARCHIVE="sing-box-${SING_VERSION}-linux-amd64.tar.gz"
+SING_URL="https://github.com/SagerNet/sing-box/releases/download/v${SING_VERSION}/${SING_ARCHIVE}"
+HOST_BIN="$HOME/.local/share/claude-sandbox/sing-box"
+HOST_CFG="$HOME/.config/claude-sandbox/host.json"
+HOST_UNIT="$HOME/.config/systemd/user/claude-sandbox-proxy.service"
+
+fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
+say() { printf '%s\n' "$*"; }
+vsh() { virsh -c "$URI" "$@"; }
+cfg() { jq -er --arg key "$1" '.[$key]' "$ROOT/config.local.json"; }
+
+ensure_config() {
+  if [[ ! -f "$ROOT/config.local.json" ]]; then
+    cp "$ROOT/config.example.json" "$ROOT/config.local.json"
+    say "created config.local.json"
+  fi
+  mkdir -p "$CACHE"
+}
+
+doctor() {
+  ensure_config
+  for command in virsh virt-install qemu-img xorriso curl jq ssh-keygen ssh sha256sum tar python3; do
+    command -v "$command" >/dev/null || fail "missing command: $command"
+  done
+  [[ -r /dev/kvm && -w /dev/kvm ]] || fail "KVM device is not accessible"
+  vsh list --all >/dev/null || fail "qemu:///system is not accessible"
+  vsh pool-info "$POOL" >/dev/null || fail "libvirt storage pool '$POOL' is unavailable"
+  python3 "$ROOT/scripts/render.py" --validate
+  local port expected trace actual
+  port=$(cfg upstream_socks_port)
+  expected=$(cfg timezone)
+  trace=$(curl -fsS --max-time 15 --proxy "socks5h://127.0.0.1:$port" https://ipinfo.io/json) \
+    || fail "SOCKS port $port cannot reach ipinfo.io"
+  actual=$(jq -er '.timezone' <<<"$trace") || fail "cannot read proxy exit timezone"
+  [[ "$actual" == "$expected" ]] || fail "proxy exit timezone is $actual, config says $expected"
+  say "doctor OK: KVM/libvirt available; SOCKS :$port exits via $(jq -r '.country' <<<"$trace")/$actual"
+}
+
+ensure_key() {
+  if [[ ! -f "$RUN/id_ed25519" ]]; then
+    ssh-keygen -q -t ed25519 -N '' -C claude-sandbox -f "$RUN/id_ed25519"
+    chmod 600 "$RUN/id_ed25519"
+  fi
+}
+
+download_assets() {
+  if [[ ! -f "$CACHE/$UBUNTU_IMAGE" ]]; then
+    say "downloading Ubuntu 26.04 cloud image"
+    curl -fL --retry 3 --continue-at - "$UBUNTU_URL" -o "$CACHE/$UBUNTU_IMAGE"
+  fi
+  printf '%s  %s\n' "$UBUNTU_SHA256" "$CACHE/$UBUNTU_IMAGE" | sha256sum -c - \
+    || fail "Ubuntu image checksum mismatch"
+  if [[ ! -f "$CACHE/$SING_ARCHIVE" ]]; then
+    say "downloading sing-box $SING_VERSION"
+    curl -fL --retry 3 --continue-at - "$SING_URL" -o "$CACHE/$SING_ARCHIVE"
+  fi
+  printf '%s  %s\n' "$SING_SHA256" "$CACHE/$SING_ARCHIVE" | sha256sum -c - \
+    || fail "sing-box archive checksum mismatch"
+  if [[ ! -x "$CACHE/sing-box" ]]; then
+    tar -xzOf "$CACHE/$SING_ARCHIVE" "sing-box-${SING_VERSION}-linux-amd64/sing-box" >"$CACHE/sing-box"
+    chmod 755 "$CACHE/sing-box"
+  fi
+  "$CACHE/sing-box" check -c "$RUN/host.json"
+  "$CACHE/sing-box" check -c "$RUN/iso/guest.json"
+  cp "$CACHE/sing-box" "$RUN/iso/sing-box"
+  xorriso -as mkisofs -quiet -V CLAUDETOOLS -o "$CACHE/tools.iso" "$RUN/iso" >/dev/null 2>&1
+  xorriso -as mkisofs -quiet -V cidata -o "$CACHE/seed.iso" "$RUN/seed" >/dev/null 2>&1
+}
+
+ensure_network() {
+  local info
+  if ! vsh net-info "$NET" >/dev/null 2>&1; then
+    vsh net-define --validate "$RUN/network.xml"
+  fi
+  info=$(LC_ALL=C vsh net-info "$NET")
+  if [[ ! $info =~ Active:[[:space:]]*yes ]]; then
+    vsh net-start "$NET"
+  fi
+  vsh net-autostart "$NET" >/dev/null
+  if ! vsh nwfilter-dumpxml "$FILTER" >/dev/null 2>&1; then
+    vsh nwfilter-define --validate "$RUN/filter.xml" >/dev/null
+  fi
+}
+
+ensure_host_proxy() {
+  install -D -m 0755 "$CACHE/sing-box" "$HOST_BIN"
+  install -D -m 0644 "$RUN/host.json" "$HOST_CFG"
+  mkdir -p "$(dirname "$HOST_UNIT")"
+  cat >"$HOST_UNIT" <<UNIT
+[Unit]
+Description=Claude sandbox guarded upstream proxy
+
+[Service]
+ExecStart=$HOST_BIN run -c $HOST_CFG
+Restart=always
+RestartSec=3
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target
+UNIT
+  systemctl --user daemon-reload
+  systemctl --user enable --now claude-sandbox-proxy.service >/dev/null
+  systemctl --user restart claude-sandbox-proxy.service
+  for _ in {1..10}; do
+    if systemctl --user is-active --quiet claude-sandbox-proxy.service; then
+      return
+    fi
+    sleep 1
+  done
+  fail "host proxy service failed; inspect journalctl --user -u claude-sandbox-proxy.service"
+}
+
+upload_volume() {
+  local name=$1 file=$2 format=$3 size marker checksum
+  if [[ "$name" != "$BASE" ]]; then
+    marker="$RUN/${name}.sha256"
+    checksum=$(sha256sum "$file" | cut -d' ' -f1)
+    if vsh vol-info --pool "$POOL" "$name" >/dev/null 2>&1 \
+      && [[ "$(cat "$marker" 2>/dev/null || true)" != "$checksum" ]]; then
+      vsh vol-delete --pool "$POOL" "$name" >/dev/null
+    fi
+  fi
+  if ! vsh vol-info --pool "$POOL" "$name" >/dev/null 2>&1; then
+    size=$(stat -c %s "$file")
+    vsh vol-create-as "$POOL" "$name" "$size" --format "$format" >/dev/null
+    vsh vol-upload --pool "$POOL" "$name" "$file"
+    vsh pool-refresh "$POOL" >/dev/null
+  fi
+  if [[ -n "${marker:-}" ]]; then
+    printf '%s\n' "$checksum" >"$marker"
+  fi
+}
+
+ensure_volumes() {
+  local base_path
+  upload_volume "$BASE" "$CACHE/$UBUNTU_IMAGE" qcow2
+  base_path=$(vsh vol-path --pool "$POOL" "$BASE")
+  if ! vsh vol-info --pool "$POOL" "$DISK" >/dev/null 2>&1; then
+    vsh vol-create-as "$POOL" "$DISK" "$(cfg disk_gib)G" --format qcow2 \
+      --backing-vol "$base_path" --backing-vol-format qcow2 >/dev/null
+  fi
+  upload_volume "$TOOLS" "$CACHE/tools.iso" raw
+  upload_volume "$SEED" "$CACHE/seed.iso" raw
+}
+
+current_hash() {
+  jq -cS . "$ROOT/config.local.json" | sha256sum | cut -d' ' -f1
+}
+
+up() {
+  doctor
+  ensure_key
+  python3 "$ROOT/scripts/render.py"
+  if [[ -f "$RUN/config.sha256" && "$(cat "$RUN/config.sha256")" != "$(current_hash)" ]]; then
+    fail "config changed after VM creation; recreate the VM to apply it"
+  fi
+  download_assets
+  ensure_network
+  ensure_host_proxy
+  if ! vsh dominfo "$NAME" >/dev/null 2>&1; then
+    ensure_volumes
+    local disk_path tools_path seed_path
+    disk_path=$(vsh vol-path --pool "$POOL" "$DISK")
+    tools_path=$(vsh vol-path --pool "$POOL" "$TOOLS")
+    seed_path=$(vsh vol-path --pool "$POOL" "$SEED")
+    if [[ -f "$RUN/known_hosts" ]]; then
+      ssh-keygen -f "$RUN/known_hosts" -R 10.231.71.2 >/dev/null
+    fi
+    virt-install --connect "$URI" --name "$NAME" --import --noautoconsole \
+      --memory "$(cfg memory_mib)" --vcpus "$(cfg vcpus)" \
+      --cpu EPYC-v4 --machine q35 --osinfo generic \
+      --disk "path=$disk_path,format=qcow2,bus=virtio" \
+      --disk "path=$tools_path,device=cdrom,readonly=on" \
+      --disk "path=$seed_path,device=cdrom,readonly=on" \
+      --network "network=$NET,mac=52:54:00:71:00:02,model=virtio,filterref.filter=$FILTER" \
+      --graphics none --console pty,target_type=serial \
+      --wait 0
+    current_hash >"$RUN/config.sha256"
+    vsh autostart "$NAME" >/dev/null
+  elif [[ "$(vsh domstate "$NAME")" != running ]]; then
+    vsh start "$NAME"
+  fi
+  say "VM started. Bootstrap runs inside the guest; check with: ./claude-vm status"
+}
+
+ssh_guest() {
+  [[ -f "$RUN/id_ed25519" ]] || fail "run ./claude-vm up first"
+  ssh -F /dev/null -i "$RUN/id_ed25519" -o IdentitiesOnly=yes -o IdentityAgent=none \
+    -o ForwardAgent=no -o ForwardX11=no -o StrictHostKeyChecking=accept-new \
+    -o "UserKnownHostsFile=$RUN/known_hosts" -o ConnectTimeout=8 \
+    agent@10.231.71.2 "$@"
+}
+
+status() {
+  vsh dominfo "$NAME" 2>/dev/null | grep -E '^(Name|State|Autostart):' || true
+  vsh net-info "$NET" 2>/dev/null | grep -E '^(Name|Active|Autostart):' || true
+  systemctl --user is-active claude-sandbox-proxy.service || true
+  if ssh_guest test -f /var/lib/claude-sandbox-ready 2>/dev/null; then
+    say "guest bootstrap: ready"
+  else
+    say "guest bootstrap: pending (virsh console claude-sandbox; cloud-init log in guest)"
+  fi
+}
+
+check() {
+  local trace timezone
+  ssh_guest test -f /var/lib/claude-sandbox-ready || fail "guest bootstrap is incomplete"
+  ssh_guest 'test "$(id -un)" = agent && ! id -nG | grep -qw sudo && systemctl is-active --quiet claude-sandbox-net.service && test "$(jq -r .env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC ~/.claude/settings.json)" = 1 && ! env | grep -Ei "^(http_proxy|https_proxy|all_proxy|TZ)="'
+  [[ "$(ssh_guest 'timedatectl show -p Timezone --value')" == "$(cfg timezone)" ]] \
+    || fail "guest system timezone differs from config"
+  trace=$(ssh_guest 'curl -fsS --max-time 20 https://ipinfo.io/json')
+  timezone=$(jq -er '.timezone' <<<"$trace")
+  [[ "$timezone" == "$(cfg timezone)" ]] || fail "guest exit timezone $timezone differs from configured timezone"
+  if ssh_guest 'timeout 4 bash -c "</dev/tcp/169.254.169.254/80"' 2>/dev/null; then
+    fail "metadata endpoint reachable"
+  fi
+  if ssh_guest 'timeout 4 bash -c "</dev/tcp/10.231.71.1/53"' 2>/dev/null; then
+    fail "host DNS reachable from guest"
+  fi
+  ssh_guest 'timeout 4 bash -c "</dev/tcp/10.231.71.1/10980"' \
+    || fail "guest cannot reach guarded proxy"
+  say "check OK: agent without sudo, timezone $timezone, proxied egress $(jq -r '.country' <<<"$trace"), host DNS/metadata blocked"
+}
+
+rebuild() {
+  [[ "${1:-}" == --yes ]] || fail "rebuild deletes the VM disk; run ./claude-vm rebuild --yes"
+  if vsh dominfo "$NAME" >/dev/null 2>&1; then
+    if [[ "$(vsh domstate "$NAME")" == running ]]; then
+      vsh destroy "$NAME"
+    fi
+    vsh undefine "$NAME"
+  fi
+  if vsh vol-info --pool "$POOL" "$DISK" >/dev/null 2>&1; then
+    vsh vol-delete --pool "$POOL" "$DISK"
+  fi
+  rm -f "$RUN/config.sha256"
+  up
+}
+
+case "${1:-}" in
+  doctor) doctor ;;
+  up) up ;;
+  ssh) shift; ssh_guest "$@" ;;
+  status) status ;;
+  check) check ;;
+  start) systemctl --user start claude-sandbox-proxy.service; vsh start "$NAME" ;;
+  stop) vsh shutdown "$NAME" ;;
+  rebuild) shift; rebuild "${1:-}" ;;
+  *) say "usage: ./claude-vm {doctor|up|ssh|status|check|start|stop|rebuild --yes}"; exit 2 ;;
+esac
