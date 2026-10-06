@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
 """Render the VM and proxy configuration from one validated local config."""
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -12,19 +12,30 @@ ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "runtime"
 GATEWAY = "10.231.71.1"
 GUEST = "10.231.71.2"
+MACOS_PROXY = "10.0.2.100"
 MAC = "52:54:00:71:00:02"
 PROXY_PORT = 10980
+PRIVATE = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
 BLOCKED = [
-    "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8",
-    "169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24",
-    "192.0.2.0/24", "192.168.0.0/16", "198.18.0.0/15",
-    "198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4",
+    "0.0.0.0/8",
+    "100.64.0.0/10",
+    "127.0.0.0/8",
+    "169.254.0.0/16",
+    "192.0.0.0/24",
+    "192.0.2.0/24",
+    "198.18.0.0/15",
+    "198.51.100.0/24",
+    "203.0.113.0/24",
+    "224.0.0.0/4",
+    "240.0.0.0/4",
 ]
 
 
 def config() -> dict[str, int | str]:
     path = ROOT / "config.local.json"
-    data = json.loads(path.read_text() if path.exists() else (ROOT / "config.example.json").read_text())
+    data = json.loads(
+        path.read_text() if path.exists() else (ROOT / "config.example.json").read_text()
+    )
     expected = {"upstream_socks_port", "timezone", "memory_mib", "vcpus", "disk_gib"}
     if set(data) != expected:
         raise ValueError(f"config keys must be {', '.join(sorted(expected))}")
@@ -51,50 +62,97 @@ def json_file(path: Path, value: dict) -> None:
     put(path, json.dumps(value, indent=2) + "\n")
 
 
-def host_proxy(port: int) -> dict:
+def host_proxy(port: int, listen: str) -> dict:
     return {
         "log": {"level": "warn"},
         "dns": {
-            "servers": [{"type": "https", "tag": "doh", "server": "1.1.1.1", "detour": "upstream"}],
-            "final": "doh", "strategy": "ipv4_only",
+            "servers": [
+                {
+                    "type": "https",
+                    "tag": "doh",
+                    "server": "1.1.1.1",
+                    "detour": "upstream",
+                }
+            ],
+            "final": "doh",
+            "strategy": "ipv4_only",
         },
-        "inbounds": [{"type": "socks", "tag": "guest", "listen": GATEWAY, "listen_port": PROXY_PORT}],
+        "inbounds": [
+            {
+                "type": "socks",
+                "tag": "guest",
+                "listen": listen,
+                "listen_port": PROXY_PORT,
+            }
+        ],
         "outbounds": [
-            {"type": "socks", "tag": "upstream", "server": "127.0.0.1", "server_port": port, "version": "5"},
+            {
+                "type": "socks",
+                "tag": "upstream",
+                "server": "127.0.0.1",
+                "server_port": port,
+                "version": "5",
+            },
+            {"type": "direct", "tag": "private"},
             {"type": "block", "tag": "block"},
         ],
         "route": {
             "rules": [
-                {"domain_suffix": [".localhost", ".local", ".internal", ".home.arpa"], "outbound": "block"},
+                {
+                    "domain_suffix": [
+                        ".localhost",
+                        ".local",
+                        ".internal",
+                        ".home.arpa",
+                    ],
+                    "outbound": "block",
+                },
                 {"action": "resolve", "strategy": "ipv4_only"},
                 {"ip_version": 6, "outbound": "block"},
                 {"ip_cidr": BLOCKED, "outbound": "block"},
+                {"ip_cidr": PRIVATE, "outbound": "private"},
             ],
             "final": "upstream",
         },
     }
 
 
-def guest_proxy() -> dict:
+def guest_proxy(proxy: str, udp_over_tcp: bool = False) -> dict:
+    outbound = {
+        "type": "socks",
+        "tag": "host",
+        "server": proxy,
+        "server_port": PROXY_PORT,
+        "version": "5",
+    }
+    if udp_over_tcp:
+        outbound["udp_over_tcp"] = True
     return {
         "log": {"level": "warn"},
         "dns": {
             "servers": [{"type": "https", "tag": "doh", "server": "1.1.1.1", "detour": "host"}],
-            "final": "doh", "strategy": "ipv4_only",
+            "final": "doh",
+            "strategy": "ipv4_only",
         },
-        "inbounds": [{
-            "type": "tun", "tag": "tun", "interface_name": "claudetun",
-            "address": ["172.19.0.1/30"], "dns_address": ["172.19.0.2"],
-            "auto_route": True, "auto_redirect": True, "strict_route": True,
-            "route_exclude_address": [f"{GATEWAY}/32"],
-        }],
-        "outbounds": [{
-            "type": "socks", "tag": "host", "server": GATEWAY,
-            "server_port": PROXY_PORT, "version": "5",
-        }],
+        "inbounds": [
+            {
+                "type": "tun",
+                "tag": "tun",
+                "interface_name": "claudetun",
+                "address": ["172.19.0.1/30"],
+                "dns_address": ["172.19.0.2"],
+                "auto_route": True,
+                "auto_redirect": True,
+                "strict_route": True,
+                "route_exclude_address": [f"{proxy}/32"],
+            }
+        ],
+        "outbounds": [outbound],
         "route": {
             "auto_detect_interface": True,
             "rules": [
+                {"ip_cidr": ["172.19.0.2/32"], "port": 53, "action": "hijack-dns"},
+                {"ip_cidr": PRIVATE, "outbound": "host"},
                 {"port": 53, "action": "hijack-dns"},
                 {"ip_version": 6, "action": "reject"},
                 {"ip_cidr": BLOCKED, "action": "reject"},
@@ -204,21 +262,30 @@ touch /var/lib/claude-sandbox-ready
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--platform", choices=("linux", "macos"), default="linux")
+    parser.add_argument("--validate", action="store_true")
+    args = parser.parse_args()
     cfg = config()
-    if len(sys.argv) == 2 and sys.argv[1] == "--validate":
+    if args.validate:
         return
-    if len(sys.argv) != 1:
-        raise ValueError("usage: render.py [--validate]")
     key = (RUNTIME / "id_ed25519.pub").read_text().strip()
-    put(RUNTIME / "network.xml", render_network())
-    put(RUNTIME / "filter.xml", render_filter())
-    json_file(RUNTIME / "host.json", host_proxy(cfg["upstream_socks_port"]))
-    json_file(RUNTIME / "iso" / "guest.json", guest_proxy())
+    if args.platform == "linux":
+        put(RUNTIME / "network.xml", render_network())
+        put(RUNTIME / "filter.xml", render_filter())
+    listen, proxy = (GATEWAY, GATEWAY) if args.platform == "linux" else ("127.0.0.1", MACOS_PROXY)
+    json_file(RUNTIME / "host.json", host_proxy(cfg["upstream_socks_port"], listen))
+    json_file(RUNTIME / "iso" / "guest.json", guest_proxy(proxy, args.platform == "macos"))
     put(RUNTIME / "user-data", render_user_data(key), 0o600)
     put(RUNTIME / "seed" / "user-data", render_user_data(key), 0o600)
-    put(RUNTIME / "seed" / "meta-data", "instance-id: claude-sandbox-001\nlocal-hostname: claude-sandbox\n")
+    put(
+        RUNTIME / "seed" / "meta-data",
+        "instance-id: claude-sandbox-001\nlocal-hostname: claude-sandbox\n",
+    )
     put(RUNTIME / "iso" / "bootstrap.sh", render_bootstrap(cfg["timezone"]), 0o755)
-    put(RUNTIME / "iso" / "guest.service", """[Unit]
+    put(
+        RUNTIME / "iso" / "guest.service",
+        """[Unit]
 Description=Claude sandbox guest tunnel
 After=network-online.target
 Wants=network-online.target
@@ -232,7 +299,8 @@ CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
 
 [Install]
 WantedBy=multi-user.target
-""")
+""",
+    )
 
 
 if __name__ == "__main__":

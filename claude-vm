@@ -2,6 +2,9 @@
 set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+if [[ $(uname -s) == Darwin ]]; then
+  exec python3 "$ROOT/scripts/macos.py" "$@"
+fi
 RUN="$ROOT/runtime"
 CACHE="$RUN/cache"
 URI=qemu:///system
