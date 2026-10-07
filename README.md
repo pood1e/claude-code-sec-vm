@@ -7,7 +7,7 @@
 ```text
 VM agent / Claude Code → sing-box TUN → 隔离网络 → 宿主 sing-box 守卫
                                          ├─ RFC1918 私网 → 宿主直连
-                                         └─ 公网 → 宿主 SOCKS5 127.0.0.1:10813
+                                         └─ 公网 → 宿主 SOCKS5 127.0.0.1:10811
 ```
 
 Linux 使用 libvirt/KVM 独立网络和 nwfilter，只允许 VM 连接宿主守卫端口。macOS 使用 QEMU/HVF 的受限用户网络，仅向 VM 开放代理转发和宿主本地 SSH 入口。VM 内的 `agent` 用户没有 sudo 权限；没有宿主目录或密钥挂载，也不设置显式代理环境变量。
@@ -22,7 +22,7 @@ Linux 需要 KVM、libvirt、virt-install、xorriso、Python 3、curl、jq 和 S
 brew install python qemu sing-box xorriso
 ```
 
-两种宿主都需要可用的 SOCKS5 `127.0.0.1:10813`。`config.local.json` 可设置实际端口、出口时区和 VM 资源。
+两种宿主都需要可用的 SOCKS5 `127.0.0.1:10811`。`config.local.json` 可设置实际端口、出口时区和 VM 资源。
 
 ```bash
 git clone https://github.com/pood1e/claude-code-sec-vm.git
@@ -35,6 +35,8 @@ cd claude-code-sec-vm
 ```
 
 首次启动会下载并校验 Ubuntu Cloud Image 与 sing-box，在 VM 中安装 Claude Code。`status` 显示 `ready` 后运行 `check`；进入 VM 后在项目目录执行 `claude`，按官方流程登录。项目代码在 VM 内通过 Git 获取。SSH 不转发宿主 SSH agent。
+
+Linux 宿主使用 `sftp -i runtime/id_ed25519 agent@10.231.71.2` 传文件；macOS 宿主使用 `sftp -P 10022 -i runtime/id_ed25519 agent@127.0.0.1`。
 
 运行中的 VM 用 `./claude-vm stop` 关闭，再用 `./claude-vm start` 启动。macOS 宿主重启后需要运行 `start`。创建 VM 后修改 `config.local.json` 或 VM 内启动配置，需要运行 `./claude-vm rebuild --yes`；该命令会删除 VM 系统盘及工作数据。`runtime/` 保存 SSH 私钥、镜像和生成配置，已被 Git 忽略。
 
